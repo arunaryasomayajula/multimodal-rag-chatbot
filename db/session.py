@@ -19,5 +19,6 @@ def get_db():
 
 
 def init_db():
-    from db import models  # noqa: F401 — ensures models are registered
+    from db import models  # noqa: F401 — registers Document, Chunk, TabularDataset
+    from auth import models as _auth_models  # noqa: F401 — registers User, RefreshToken, UserCredential
     Base.metadata.create_all(bind=engine)

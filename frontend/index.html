@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Chatbot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#111827;--surface:#1f2937;--surface2:#283548;--border:#374151;
+  --text:#f9fafb;--muted:#9ca3af;--muted2:#6b7280;
+  --primary:#6366f1;--primary-h:#4f46e5;
+  --success:#10b981;--warning:#f59e0b;--danger:#ef4444;
+  --tabular:#8b5cf6;--tabular-h:#7c3aed;
+  --r:8px;
+}
+html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── Utilities ── */
+.hidden{display:none!important}
+
+/* ═══════════════════════════════════════════
+   AUTH SCREEN
+═══════════════════════════════════════════ */
+.auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse at 50% 0%,rgba(99,102,241,.15) 0%,transparent 60%),var(--bg)}
+.auth-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.4)}
+.auth-brand{text-align:center;margin-bottom:28px}
+.auth-brand-icon{font-size:36px;margin-bottom:10px}
+.auth-brand h1{font-size:22px;font-weight:700}
+.auth-brand p{color:var(--muted);font-size:13px;margin-top:4px}
+.auth-tabs{display:flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:24px}
+.auth-tab{flex:1;padding:9px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;font-weight:500;font-family:inherit;transition:.15s}
+.auth-tab.active{background:var(--primary);color:#fff}
+.auth-tab:hover:not(.active){color:var(--text)}
+.auth-hint{font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;padding:8px 12px;background:rgba(99,102,241,.08);border-radius:6px;border:1px solid rgba(99,102,241,.2)}
+.form-group{margin-bottom:16px}
+.form-label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em}
+.form-input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:14px;font-family:inherit;outline:none;transition:.15s}
+.form-input:focus{border-color:var(--primary)}
+.form-input::placeholder{color:var(--muted2)}
+.btn-primary{width:100%;padding:11px;background:var(--primary);color:#fff;border:none;border-radius:var(--r);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;margin-top:4px}
+.btn-primary:hover{background:var(--primary-h)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.auth-msg{font-size:13px;margin-bottom:14px;padding:9px 12px;border-radius:6px}
+.auth-msg.error{color:var(--danger);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2)}
+.auth-msg.success{color:var(--success);background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.2)}
+
+/* ═══════════════════════════════════════════
+   APP LAYOUT
+═══════════════════════════════════════════ */
+.app{display:flex;height:100vh;overflow:hidden}
+
+/* ── Sidebar ── */
+.sidebar{width:268px;min-width:268px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sb-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sb-logo{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+.sb-logo span{opacity:.7;font-size:18px}
+.btn-new{padding:5px 11px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-new:hover{background:var(--primary-h)}
+.sb-body{flex:1;overflow-y:auto;padding:14px 14px}
+.sb-section{margin-bottom:22px}
+.sb-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted2);margin-bottom:9px}
+
+/* Model select */
+.model-select{width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px;font-family:inherit;cursor:pointer;outline:none;transition:.15s}
+.model-select:focus{border-color:var(--primary)}
+.model-select optgroup{font-size:12px;font-weight:600;color:var(--muted)}
+.model-desc{margin-top:6px;font-size:11px;color:var(--muted);padding:5px 8px;background:var(--bg);border-radius:5px;border:1px solid var(--border);min-height:22px}
+
+/* Upload */
+.upload-zone{border:2px dashed var(--border);border-radius:var(--r);padding:18px 14px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;position:relative}
+.upload-zone:hover,.upload-zone.drag-over{border-color:var(--primary);background:rgba(99,102,241,.05)}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.upload-icon{font-size:22px;margin-bottom:5px}
+.upload-zone p{font-size:12px;color:var(--muted);line-height:1.4}
+.upload-zone strong{color:var(--text)}
+.upload-status{margin-top:8px;padding:7px 10px;border-radius:6px;font-size:12px;line-height:1.4}
+.upload-status.pending{background:rgba(99,102,241,.1);color:var(--primary);border:1px solid rgba(99,102,241,.25)}
+.upload-status.success{background:rgba(16,185,129,.1);color:var(--success);border:1px solid rgba(16,185,129,.25)}
+.upload-status.error{background:rgba(239,68,68,.1);color:var(--danger);border:1px solid rgba(239,68,68,.25)}
+
+/* Datasets */
+.dataset-empty{font-size:12px;color:var(--muted);line-height:1.5}
+.dataset-item{padding:9px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:7px;transition:border-color .15s}
+.dataset-item:hover{border-color:var(--tabular)}
+.dataset-item.active{border-color:var(--tabular);background:rgba(139,92,246,.08)}
+.ds-name{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ds-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.ds-cols{font-size:10px;color:var(--muted2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ds-actions{display:flex;gap:5px;margin-top:7px}
+.btn-xs{padding:3px 9px;border:1px solid var(--border);border-radius:4px;background:none;color:var(--muted);font-size:11px;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
+.btn-xs:hover{border-color:var(--tabular);color:var(--tabular)}
+.btn-xs.on{border-color:var(--tabular);color:var(--tabular);background:rgba(139,92,246,.12)}
+
+/* Sidebar footer */
+.sb-footer{padding:11px 14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.user-info{overflow:hidden}
+.user-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-role{font-size:10px;color:var(--muted)}
+.btn-signout{padding:4px 10px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn-signout:hover{border-color:var(--danger);color:var(--danger)}
+
+/* ── Chat main ── */
+.chat-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.chat-hdr{padding:11px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:46px}
+.chat-title{font-size:14px;font-weight:600;flex:1;color:var(--text)}
+.badge{padding:3px 11px;border-radius:20px;font-size:11px;font-weight:500;white-space:nowrap}
+.badge.model{background:rgba(99,102,241,.15);color:var(--primary);border:1px solid rgba(99,102,241,.3)}
+.badge.dataset{background:rgba(139,92,246,.15);color:var(--tabular);border:1px solid rgba(139,92,246,.3)}
+
+/* Messages */
+.messages{flex:1;overflow-y:auto;padding:20px}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;color:var(--muted);padding:40px}
+.empty-icon{font-size:48px;margin-bottom:16px;opacity:.6}
+.empty-state h2{font-size:22px;font-weight:600;color:var(--text);margin-bottom:8px}
+.empty-state p{font-size:14px;max-width:380px}
+.suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:20px}
+.chip{padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:20px;font-size:13px;color:var(--muted);cursor:pointer;transition:.15s}
+.chip:hover{border-color:var(--primary);color:var(--text)}
+
+/* Message groups */
+.msg-group{margin-bottom:18px;max-width:800px;margin-left:auto;margin-right:auto}
+.msg-group.user{display:flex;flex-direction:column;align-items:flex-end}
+.msg-group.user .msg-bubble{background:var(--primary);color:#fff;border-radius:18px 18px 4px 18px;max-width:75%}
+.msg-group.assistant .msg-bubble{background:var(--surface);border:1px solid var(--border);border-radius:18px 18px 18px 4px;max-width:100%}
+.msg-bubble{padding:12px 16px;font-size:14px;line-height:1.65;word-break:break-word}
+.msg-bubble pre{background:rgba(0,0,0,.3);padding:10px;border-radius:6px;font-family:monospace;font-size:12px;overflow-x:auto;margin:8px 0;white-space:pre}
+.msg-bubble code{background:rgba(255,255,255,.1);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12px}
+.msg-meta{display:flex;align-items:center;gap:7px;margin-top:6px;flex-wrap:wrap}
+.msg-group.user .msg-meta{justify-content:flex-end}
+.route-badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500}
+.route-badge.rag{background:rgba(16,185,129,.12);color:var(--success);border:1px solid rgba(16,185,129,.3)}
+.route-badge.tabular{background:rgba(139,92,246,.12);color:var(--tabular);border:1px solid rgba(139,92,246,.3)}
+.src-btn{padding:2px 9px;background:none;border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:11px;cursor:pointer;font-family:inherit;transition:.15s}
+.src-btn:hover{border-color:var(--primary);color:var(--primary)}
+.src-btn.open{border-color:var(--primary);color:var(--primary)}
+.sources-panel{margin-top:6px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);max-width:520px}
+.src-item{font-size:12px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px}
+.src-item:last-child{border-bottom:none}
+.src-num{min-width:20px;height:20px;background:var(--primary);color:#fff;border-radius:50%;text-align:center;line-height:20px;font-size:10px;font-weight:700}
+
+/* Tabular result card */
+.tab-card{background:linear-gradient(135deg,rgba(139,92,246,.1),rgba(99,102,241,.05));border:1px solid rgba(139,92,246,.3);border-radius:var(--r);padding:13px 14px;margin-top:8px;max-width:480px}
+.tab-card-title{font-size:12px;font-weight:700;color:var(--tabular);margin-bottom:9px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.04em}
+.tab-pills{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px}
+.tab-pill{padding:4px 10px;background:rgba(139,92,246,.2);border-radius:6px;font-size:12px;font-weight:600;color:var(--text)}
+.tab-note{font-size:11px;color:var(--muted)}
+
+/* Thinking */
+.thinking{display:flex;gap:4px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:18px 18px 18px 4px;width:fit-content}
+.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+/* Input area */
+.input-area{padding:14px 20px 16px;border-top:1px solid var(--border)}
+.input-wrap{display:flex;align-items:flex-end;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;transition:.15s}
+.input-wrap:focus-within{border-color:var(--primary)}
+.msg-ta{flex:1;background:none;border:none;color:var(--text);font-size:14px;font-family:inherit;resize:none;min-height:24px;max-height:160px;outline:none;line-height:1.5}
+.msg-ta::placeholder{color:var(--muted2)}
+.btn-send{padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
+.btn-send:hover{background:var(--primary-h)}
+.btn-send:disabled{opacity:.4;cursor:not-allowed}
+.input-hint{font-size:11px;color:var(--muted2);margin-top:6px;text-align:center}
+
+/* ═══════════════════════════════════════════
+   PREDICT MODAL
+═══════════════════════════════════════════ */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:100%;max-width:560px;max-height:85vh;overflow-y:auto}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.modal-hdr h2{font-size:16px;font-weight:700}
+.btn-close{background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1;padding:0 4px}
+.btn-close:hover{color:var(--text)}
+.modal-body{display:flex;flex-direction:column;gap:14px}
+.pred-result{margin-top:14px;padding:14px;background:var(--bg);border-radius:var(--r);border:1px solid var(--border)}
+.metric-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.metric-box{flex:1;min-width:80px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;border:1px solid var(--border)}
+.metric-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.metric-val{font-size:20px;font-weight:700;color:var(--tabular);margin-top:3px}
+.pred-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.pred-table th{padding:6px 8px;background:var(--surface2);border:1px solid var(--border);font-weight:600;color:var(--muted);text-align:left}
+.pred-table td{padding:5px 8px;border:1px solid var(--border);color:var(--text)}
+.pred-table tr:hover td{background:rgba(139,92,246,.05)}
+
+/* ═══════════════════════════════════════════
+   TOASTS
+═══════════════════════════════════════════ */
+.toasts{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:300}
+.toast{padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;animation:slideIn .2s ease;max-width:320px;pointer-events:none}
+.toast.success{background:rgba(16,185,129,.9);color:#fff}
+.toast.error{background:rgba(239,68,68,.9);color:#fff}
+.toast.info{background:rgba(99,102,241,.9);color:#fff}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+</style>
+</head>
+<body>
+
+<!-- ═══════ AUTH SCREEN ═══════ -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="auth-brand-icon">🔮</div>
+      <h1>RAG Chatbot</h1>
+      <p>Multi-model · Vector search · TABICLv2</p>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login"     onclick="setTab('login')">Sign in</button>
+      <button class="auth-tab"        id="tab-register"  onclick="setTab('register')">Create account</button>
+    </div>
+    <p class="auth-hint" id="auth-hint">Welcome back — sign in to continue.</p>
+    <div id="auth-msg" class="hidden"></div>
+    <form id="auth-form" onsubmit="handleAuth(event)">
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input class="form-input" type="email" id="inp-email" placeholder="you@example.com" autocomplete="email" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="password" id="inp-pass" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn-primary" id="auth-btn">Sign in</button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════ MAIN APP ═══════ -->
+<div id="app" class="app hidden">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sb-header">
+      <div class="sb-logo"><span>🔮</span>RAG Chat</div>
+      <button class="btn-new" onclick="newChat()">+ New chat</button>
+    </div>
+
+    <div class="sb-body">
+
+      <!-- Model selector -->
+      <div class="sb-section">
+        <div class="sb-title">Foundation Model</div>
+        <select class="model-select" id="model-sel" onchange="pickModel(this.value)">
+          <option value="">Loading…</option>
+        </select>
+        <div class="model-desc" id="model-desc">—</div>
+      </div>
+
+      <!-- Upload -->
+      <div class="sb-section">
+        <div class="sb-title">Upload Document</div>
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="file-input" accept=".txt,.md,.rst,.pdf,.csv,.xlsx,.xls,.parquet" onchange="onFileSelect(event)">
+          <div class="upload-icon">📎</div>
+          <p><strong>Click or drop</strong> a file here</p>
+          <p style="margin-top:3px;font-size:11px">PDF · TXT · CSV · Excel · Parquet</p>
+        </div>
+        <div id="upload-status" class="hidden"></div>
+      </div>
+
+      <!-- Datasets -->
+      <div class="sb-section">
+        <div class="sb-title" style="display:flex;justify-content:space-between">
+          TABICLv2 Datasets
+          <span id="ds-count" style="font-weight:400;font-size:10px;color:var(--muted2)">0</span>
+        </div>
+        <div id="ds-list"><p class="dataset-empty">Upload a CSV or Excel file to enable zero-shot prediction.</p></div>
+      </div>
+
+    </div>
+
+    <div class="sb-footer">
+      <div class="user-info">
+        <div class="user-name" id="user-name">—</div>
+        <div class="user-role">Authenticated user</div>
+      </div>
+      <button class="btn-signout" onclick="signOut()">Sign out</button>
+    </div>
+  </aside>
+
+  <!-- Chat -->
+  <main class="chat-main">
+    <div class="chat-hdr">
+      <span class="chat-title">Chat</span>
+      <span class="badge model" id="hdr-model">—</span>
+      <span class="badge dataset hidden" id="hdr-dataset">—</span>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">🔮</div>
+        <h2>What would you like to know?</h2>
+        <p>Ask questions about your documents, or upload a CSV and run zero-shot predictions with TABICLv2.</p>
+        <div class="suggestions">
+          <div class="chip" onclick="fillInput('Summarise the uploaded document')">📄 Summarise document</div>
+          <div class="chip" onclick="fillInput('What are the key findings?')">🔍 Key findings</div>
+          <div class="chip" onclick="fillInput('predict species')">📊 Predict column</div>
+          <div class="chip" onclick="fillInput('What models are available?')">🤖 Available models</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea class="msg-ta" id="msg-input"
+          placeholder="Ask a question… or 'predict [column]' with an active dataset"
+          rows="1"
+          onkeydown="onKey(event)"
+          oninput="autoGrow(this)"
+        ></textarea>
+        <button class="btn-send" id="send-btn" onclick="sendMsg()">Send ↑</button>
+      </div>
+      <div class="input-hint">Enter to send · Shift+Enter for newline</div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════ PREDICT MODAL ═══════ -->
+<div class="overlay hidden" id="pred-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>📊 TABICLv2 Prediction</h2>
+      <button class="btn-close" onclick="closePred()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Target Column</label>
+        <select class="model-select" id="pred-col"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Task Type</label>
+        <select class="model-select" id="pred-task">
+          <option value="auto">Auto-detect (≤20 unique values → classify)</option>
+          <option value="classify">Classification</option>
+          <option value="regress">Regression</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">In-context examples (context rows)</label>
+        <input class="form-input" type="number" id="pred-ctx" value="50" min="10" max="500">
+      </div>
+      <button class="btn-primary" id="pred-btn" onclick="runPred()">Run Prediction</button>
+      <div id="pred-result" class="hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ TOASTS ═══════ -->
+<div class="toasts" id="toasts"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  State
+// ═══════════════════════════════════════════════════════
+const S = {
+  token:       sessionStorage.getItem('rt')     || null,
+  email:       sessionStorage.getItem('re')     || null,
+  sessionId:   sessionStorage.getItem('rs')     || uid(),
+  dsId:        sessionStorage.getItem('rds')    || null,
+  dsName:      sessionStorage.getItem('rdsn')   || null,
+  model:       sessionStorage.getItem('rm')     || null,
+  models:      [],
+  datasets:    [],
+  busy:        false,
+  predDs:      null,
+  authMode:    'login',
+};
+sessionStorage.setItem('rs', S.sessionId);
+
+function uid() {
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random()*16|0;
+        return (c==='x'?r:(r&0x3|0x8)).toString(16);
+      });
+}
+
+// ═══════════════════════════════════════════════════════
+//  API
+// ═══════════════════════════════════════════════════════
+async function call(method, path, body, isForm) {
+  const h = {};
+  if (S.token) h['Authorization'] = 'Bearer ' + S.token;
+  if (body && !isForm) h['Content-Type'] = 'application/json';
+  const r = await fetch(path, {
+    method,
+    headers: h,
+    body: isForm ? body : body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401) { onExpired(); throw new Error('Session expired'); }
+  const t = await r.text();
+  const d = t ? JSON.parse(t) : {};
+  if (!r.ok) throw new Error(Array.isArray(d.detail) ? d.detail.map(x=>x.msg).join('; ') : (d.detail || `HTTP ${r.status}`));
+  return d;
+}
+
+function onExpired() { toast('Session expired — please sign in again.', 'error'); signOut(); }
+
+// ═══════════════════════════════════════════════════════
+//  Auth
+// ═══════════════════════════════════════════════════════
+function setTab(mode) {
+  S.authMode = mode;
+  document.getElementById('tab-login').className    = 'auth-tab' + (mode==='login'    ? ' active' : '');
+  document.getElementById('tab-register').className = 'auth-tab' + (mode==='register' ? ' active' : '');
+  document.getElementById('auth-btn').textContent   = mode === 'login' ? 'Sign in' : 'Create account';
+  document.getElementById('auth-hint').textContent  =
+    mode === 'login' ? 'Welcome back — sign in to continue.' : 'New here? Create your free account below.';
+  setAuthMsg('');
+  document.getElementById('inp-pass').autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+}
+
+function setAuthMsg(msg, type='error') {
+  const el = document.getElementById('auth-msg');
+  if (!msg) { el.className = 'hidden'; return; }
+  el.className = 'auth-msg ' + type;
+  el.textContent = msg;
+}
+
+async function handleAuth(e) {
+  e.preventDefault();
+  const email = document.getElementById('inp-email').value.trim();
+  const pass  = document.getElementById('inp-pass').value;
+  const btn   = document.getElementById('auth-btn');
+  btn.disabled = true;
+  btn.textContent = '…';
+  setAuthMsg('');
+
+  try {
+    if (S.authMode === 'register') {
+      await call('POST', '/auth/register', { email, password: pass });
+      setAuthMsg('Account created! Signing you in…', 'success');
+    }
+    const data = await call('POST', '/auth/login', { email, password: pass });
+    S.token = data.access_token;
+    S.email = email;
+    sessionStorage.setItem('rt', S.token);
+    sessionStorage.setItem('re', email);
+    await bootApp();
+  } catch (err) {
+    setAuthMsg(err.message);
+    btn.disabled = false;
+    btn.textContent = S.authMode === 'login' ? 'Sign in' : 'Create account';
+  }
+}
+
+function signOut() {
+  call('POST', '/auth/logout').catch(()=>{});
+  ['rt','re','rs','rds','rdsn','rm'].forEach(k => sessionStorage.removeItem(k));
+  Object.assign(S, { token:null, email:null, dsId:null, dsName:null });
+  document.getElementById('auth-screen').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+}
+
+// ═══════════════════════════════════════════════════════
+//  Boot
+// ═══════════════════════════════════════════════════════
+async function bootApp() {
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+
+  // User info
+  try {
+    const me = await call('GET', '/auth/me');
+    S.email = me.email;
+    document.getElementById('user-name').textContent = me.email;
+    if (me.preferences?.default_model_id) S.model = me.preferences.default_model_id;
+  } catch(_) {
+    document.getElementById('user-name').textContent = S.email || '—';
+  }
+
+  await Promise.all([loadModels(), loadDatasets()]);
+  refreshDsBadge();
+}
+
+(async () => {
+  if (!S.token) return;
+  try {
+    const me = await call('GET', '/auth/me');
+    S.email = me.email;
+    await bootApp();
+  } catch(_) {
+    sessionStorage.removeItem('rt');
+    S.token = null;
+  }
+})();
+
+// ═══════════════════════════════════════════════════════
+//  Models
+// ═══════════════════════════════════════════════════════
+const PROVIDER_ORDER = ['vllm-qwen','vllm-llama','vllm-mistral','ollama','openai_compat'];
+const PROVIDER_LABELS = {
+  'vllm-qwen':      '🐉 Qwen  (vLLM · GPU)',
+  'vllm-llama':     '🦙 Llama  (vLLM · GPU)',
+  'vllm-mistral':   '🌊 Mistral  (vLLM · GPU)',
+  'ollama':         '🖥️  Ollama  (local)',
+  'openai_compat':  '🔌 OpenAI-compat',
+};
+const PROVIDER_DESC = {
+  'vllm-qwen':    'Qwen3-4B · GPU-accelerated via vLLM · ~8 GB VRAM',
+  'vllm-llama':   'Llama 3.2-3B · GPU-accelerated via vLLM · ~6 GB VRAM',
+  'vllm-mistral': 'Mistral 7B · GPU-accelerated via vLLM · ~14 GB VRAM',
+  'ollama':       'Running locally on Ollama — CPU or Ollama-managed GPU',
+  'openai_compat':'OpenAI-compatible endpoint (LM Studio or remote server)',
+};
+
+async function loadModels() {
+  try {
+    const data = await call('GET', '/models');
+    S.models = (data.models || []).filter(m => m.type === 'llm');
+    const sel = document.getElementById('model-sel');
+    sel.innerHTML = '';
+
+    if (!S.models.length) {
+      sel.innerHTML = '<option value="">No LLM models available</option>';
+      document.getElementById('model-desc').textContent =
+        'Start a vLLM container or pull an Ollama model to see models here.';
+      return;
+    }
+
+    // Group by provider, ordered by PROVIDER_ORDER
+    const groups = {};
+    S.models.forEach(m => { (groups[m.provider] = groups[m.provider]||[]).push(m); });
+
+    const ordered = [
+      ...PROVIDER_ORDER.filter(p => groups[p]),
+      ...Object.keys(groups).filter(p => !PROVIDER_ORDER.includes(p)),
+    ];
+
+    ordered.forEach(prov => {
+      const og = document.createElement('optgroup');
+      og.label = PROVIDER_LABELS[prov] || prov.toUpperCase();
+      groups[prov].forEach(m => {
+        const o = document.createElement('option');
+        o.value = m.model_id;
+        o.textContent = m.display_name || m.model_id;
+        og.appendChild(o);
+      });
+      sel.appendChild(og);
+    });
+
+    // Restore saved selection or use first available
+    const saved = S.model;
+    const exists = S.models.find(m => m.model_id === saved);
+    const pick = (exists ? saved : S.models[0]?.model_id) || '';
+    sel.value = pick;
+    pickModel(pick, false);
+  } catch(err) {
+    console.error('loadModels', err);
+    document.getElementById('model-desc').textContent = 'Could not load models — API may still be starting.';
+  }
+}
+
+function pickModel(id, save=true) {
+  S.model = id;
+  if (save) sessionStorage.setItem('rm', id);
+  const m = S.models.find(m => m.model_id === id);
+  const desc = document.getElementById('model-desc');
+  const hdr  = document.getElementById('hdr-model');
+  if (m) {
+    const provDesc = PROVIDER_DESC[m.provider] || `Provider: ${m.provider}`;
+    desc.textContent = provDesc;
+    hdr.textContent  = m.display_name || id;
+    // Color badge by provider type
+    hdr.style.background = m.provider.startsWith('vllm')
+      ? 'rgba(139,92,246,.15)' : 'rgba(99,102,241,.15)';
+    hdr.style.color       = m.provider.startsWith('vllm') ? 'var(--tabular)' : 'var(--primary)';
+    hdr.style.borderColor = m.provider.startsWith('vllm')
+      ? 'rgba(139,92,246,.3)' : 'rgba(99,102,241,.3)';
+  } else {
+    desc.textContent = '—';
+    hdr.textContent  = id || '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Upload
+// ═══════════════════════════════════════════════════════
+const zone = document.getElementById('upload-zone');
+zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+zone.addEventListener('drop',      e => { e.preventDefault(); zone.classList.remove('drag-over'); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+
+function onFileSelect(e) { if (e.target.files[0]) upload(e.target.files[0]); e.target.value=''; }
+
+async function upload(file) {
+  if (file.size > 50 * 1024 * 1024) { toast('File too large (max 50 MB)', 'error'); return; }
+  const st = document.getElementById('upload-status');
+  setStatus(st, 'pending', `⏳ Uploading ${file.name}…`);
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await call('POST', '/ingest', fd, true);
+    if (r.type === 'tabular') {
+      setStatus(st, 'success', `✓ Dataset ready: ${file.name} · ${r.row_count} rows · ${r.columns.length} columns`);
+      toast(`Dataset "${file.name}" uploaded`, 'success');
+      await loadDatasets();
+    } else {
+      setStatus(st, 'pending', `⏳ ${file.name} queued for indexing…`);
+      pollTask(r.task_id, file.name, st);
+    }
+  } catch(err) {
+    setStatus(st, 'error', `✗ ${err.message}`);
+    toast(`Upload failed: ${err.message}`, 'error');
+  }
+}
+
+function setStatus(el, cls, msg) {
+  el.className = 'upload-status ' + cls;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+async function pollTask(taskId, name, st) {
+  let tries = 0;
+  const run = async () => {
+    try {
+      const r = await call('GET', '/ingest/' + taskId);
+      if (r.status === 'SUCCESS') {
+        setStatus(st, 'success', `✓ "${name}" indexed — ${r.result?.chunks_ingested ?? '?'} chunks`);
+        toast(`"${name}" indexed successfully`, 'success');
+      } else if (r.status === 'FAILURE') {
+        setStatus(st, 'error', `✗ Indexing failed for "${name}"`);
+        toast(`Indexing failed for "${name}"`, 'error');
+      } else if (++tries < 40) {
+        setTimeout(run, 2500);
+      } else {
+        setStatus(st, 'pending', `⏳ "${name}" still processing — check back later`);
+      }
+    } catch(err) {
+      setStatus(st, 'error', `✗ ${err.message}`);
+    }
+  };
+  setTimeout(run, 2500);
+}
+
+// ═══════════════════════════════════════════════════════
+//  Datasets
+// ═══════════════════════════════════════════════════════
+async function loadDatasets() {
+  try {
+    S.datasets = await call('GET', '/predict/datasets');
+    renderDs();
+  } catch(err) { console.error('loadDatasets', err); }
+}
+
+function renderDs() {
+  const list = document.getElementById('ds-list');
+  document.getElementById('ds-count').textContent = S.datasets.length;
+
+  if (!S.datasets.length) {
+    list.innerHTML = '<p class="dataset-empty">Upload a CSV or Excel file to enable zero-shot prediction.</p>';
+    return;
+  }
+
+  list.innerHTML = '';
+  S.datasets.forEach(ds => {
+    const name = ds.filename.split('/').pop();
+    const isOn = ds.id === S.dsId;
+    const div = document.createElement('div');
+    div.className = 'dataset-item' + (isOn ? ' active' : '');
+    div.innerHTML = `
+      <div class="ds-name">📊 ${esc(name)}</div>
+      <div class="ds-meta">${ds.row_count} rows · ${ds.column_names.length} columns</div>
+      <div class="ds-cols">${ds.column_names.slice(0,5).map(esc).join(', ')}${ds.column_names.length>5?'…':''}</div>
+      <div class="ds-actions">
+        <button class="btn-xs${isOn?' on':''}" data-id="${esc(ds.id)}" data-name="${esc(name)}" onclick="toggleDs(this)">
+          ${isOn ? '✓ Active' : 'Activate'}
+        </button>
+        <button class="btn-xs" data-id="${esc(ds.id)}" onclick="openPred(this)">Predict</button>
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+async function toggleDs(btn) {
+  const id   = btn.dataset.id;
+  const name = btn.dataset.name;
+  if (S.dsId === id) {
+    // Deactivate
+    S.dsId = null; S.dsName = null;
+    sessionStorage.removeItem('rds'); sessionStorage.removeItem('rdsn');
+    refreshDsBadge(); renderDs();
+    toast('Dataset deactivated', 'info');
+  } else {
+    try {
+      await call('POST', `/chat/set-dataset?dataset_id=${id}&session_id=${S.sessionId}`);
+      S.dsId = id; S.dsName = name;
+      sessionStorage.setItem('rds', id); sessionStorage.setItem('rdsn', name);
+      refreshDsBadge(); renderDs();
+      toast(`Dataset "${name}" activated — prediction routing enabled`, 'success');
+    } catch(err) { toast('Failed to activate: ' + err.message, 'error'); }
+  }
+}
+
+function refreshDsBadge() {
+  const b = document.getElementById('hdr-dataset');
+  if (S.dsId && S.dsName) { b.textContent = '📊 ' + S.dsName; b.classList.remove('hidden'); }
+  else b.classList.add('hidden');
+}
+
+// ═══════════════════════════════════════════════════════
+//  Chat
+// ═══════════════════════════════════════════════════════
+async function sendMsg() {
+  const ta = document.getElementById('msg-input');
+  const txt = ta.value.trim();
+  if (!txt || S.busy) return;
+  ta.value = ''; autoGrow(ta);
+  hideEmpty();
+  S.busy = true;
+  document.getElementById('send-btn').disabled = true;
+
+  addUserMsg(txt);
+  const tid = 'th-' + Date.now();
+  addThinking(tid);
+
+  try {
+    const body = { message: txt, session_id: S.sessionId };
+    if (S.model) body.model_id = S.model;
+    const r = await call('POST', '/chat', body);
+    removeEl(tid);
+    addAssistantMsg(r.answer, r.sources, r.route);
+  } catch(err) {
+    removeEl(tid);
+    addAssistantMsg('Error: ' + err.message, [], null, true);
+  } finally {
+    S.busy = false;
+    document.getElementById('send-btn').disabled = false;
+    ta.focus();
+  }
+}
+
+function hideEmpty() {
+  const e = document.getElementById('empty-state');
+  if (e) e.remove();
+}
+
+function addUserMsg(txt) {
+  const box = document.getElementById('messages');
+  const g = document.createElement('div');
+  g.className = 'msg-group user';
+  g.innerHTML = `<div class="msg-bubble">${esc(txt).replace(/\n/g,'<br>')}</div>`;
+  box.appendChild(g);
+  box.scrollTop = box.scrollHeight;
+}
+
+function addAssistantMsg(answer, sources, route, isErr=false) {
+  const box = document.getElementById('messages');
+  const g = document.createElement('div');
+  g.className = 'msg-group assistant';
+
+  const bid = 'b' + Date.now();
+  const sid = 's' + Date.now();
+  const pid = 'p' + Date.now();
+
+  const routeHtml = route
+    ? `<span class="route-badge ${route}">${route === 'tabular' ? '📊 TABICLv2' : '🔍 RAG'}</span>`
+    : '';
+  const srcHtml = (sources && sources.length)
+    ? `<button class="src-btn" id="${bid}" onclick="toggleSrc('${bid}','${pid}')">📚 ${sources.length} source${sources.length>1?'s':''}</button>`
+    : '';
+
+  const tabCard = (route === 'tabular') ? buildTabCard(answer) : '';
+
+  g.innerHTML = `
+    <div class="msg-bubble" id="${sid}">${mdHtml(answer)}</div>
+    ${tabCard}
+    <div class="msg-meta">${routeHtml}${srcHtml}</div>
+    ${buildSrcsPanel(pid, sources)}
+  `;
+  box.appendChild(g);
+  box.scrollTop = box.scrollHeight;
+}
+
+function buildTabCard(answer) {
+  const accM  = answer.match(/Accuracy:\s*([\d.]+)/i);
+  const maeM  = answer.match(/MAE:\s*([\d.]+)/i);
+  const rowM  = answer.match(/predicted (\d+) rows/i);
+  const colM  = answer.match(/column '([^']+)'/i);
+  const task  = answer.toLowerCase().includes('classification') ? 'Classification' : 'Regression';
+  const mLabel = accM ? 'Accuracy' : maeM ? 'MAE' : null;
+  const mVal  = accM ? (parseFloat(accM[1])*100).toFixed(1)+'%' : maeM ? maeM[1] : null;
+
+  return `<div class="tab-card">
+    <div class="tab-card-title">📊 ${task} Result</div>
+    <div class="tab-pills">
+      ${rowM  ? `<span class="tab-pill">${rowM[1]} rows predicted</span>` : ''}
+      ${colM  ? `<span class="tab-pill">Target: ${esc(colM[1])}</span>`   : ''}
+      ${mLabel ? `<span class="tab-pill">${mLabel}: ${mVal}</span>`       : ''}
+    </div>
+    <p class="tab-note">Open the Predict modal from the sidebar for the full predictions table.</p>
+  </div>`;
+}
+
+function buildSrcsPanel(id, sources) {
+  if (!sources || !sources.length) return '';
+  const items = sources.map(s =>
+    `<div class="src-item"><span class="src-num">${s.ref}</span>${esc(s.file)}${s.page?` · p.${s.page}`:''}</div>`
+  ).join('');
+  return `<div class="sources-panel hidden" id="${id}">${items}</div>`;
+}
+
+function toggleSrc(btnId, panelId) {
+  const btn = document.getElementById(btnId);
+  const pnl = document.getElementById(panelId);
+  const open = pnl.classList.toggle('hidden');
+  btn.classList.toggle('open', !open);
+}
+
+function addThinking(id) {
+  const box = document.getElementById('messages');
+  const g = document.createElement('div');
+  g.className = 'msg-group assistant';
+  g.id = id;
+  g.innerHTML = `<div class="thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+  box.appendChild(g);
+  box.scrollTop = box.scrollHeight;
+}
+
+function removeEl(id) { document.getElementById(id)?.remove(); }
+
+// ═══════════════════════════════════════════════════════
+//  New chat
+// ═══════════════════════════════════════════════════════
+function newChat() {
+  S.sessionId = uid();
+  sessionStorage.setItem('rs', S.sessionId);
+  S.dsId = null; S.dsName = null;
+  sessionStorage.removeItem('rds'); sessionStorage.removeItem('rdsn');
+  refreshDsBadge(); renderDs();
+  const box = document.getElementById('messages');
+  box.innerHTML = `
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">🔮</div>
+      <h2>What would you like to know?</h2>
+      <p>Ask questions about your documents, or upload a CSV and run zero-shot predictions with TABICLv2.</p>
+      <div class="suggestions">
+        <div class="chip" onclick="fillInput('Summarise the uploaded document')">📄 Summarise document</div>
+        <div class="chip" onclick="fillInput('What are the key findings?')">🔍 Key findings</div>
+        <div class="chip" onclick="fillInput('predict species')">📊 Predict column</div>
+        <div class="chip" onclick="fillInput('What models are available?')">🤖 Available models</div>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  Predict modal
+// ═══════════════════════════════════════════════════════
+function openPred(btn) {
+  const id = btn.dataset.id;
+  const ds = S.datasets.find(d => d.id === id);
+  if (!ds) { toast('Dataset not found', 'error'); return; }
+  S.predDs = id;
+  const sel = document.getElementById('pred-col');
+  sel.innerHTML = ds.column_names.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  document.getElementById('pred-result').classList.add('hidden');
+  document.getElementById('pred-btn').disabled = false;
+  document.getElementById('pred-btn').textContent = 'Run Prediction';
+  document.getElementById('pred-modal').classList.remove('hidden');
+}
+
+function closePred() {
+  document.getElementById('pred-modal').classList.add('hidden');
+  S.predDs = null;
+}
+
+async function runPred() {
+  const col  = document.getElementById('pred-col').value;
+  const task = document.getElementById('pred-task').value;
+  const ctx  = parseInt(document.getElementById('pred-ctx').value) || 50;
+  const btn  = document.getElementById('pred-btn');
+  btn.disabled = true; btn.textContent = 'Running…';
+
+  try {
+    const r = await call('POST', '/predict', {
+      dataset_id: S.predDs, target_column: col, task_type: task, context_rows: ctx,
+    });
+    renderPredResult(r);
+  } catch(err) {
+    toast('Prediction failed: ' + err.message, 'error');
+    btn.disabled = false; btn.textContent = 'Run Prediction';
+  } finally {
+    if (!document.getElementById('pred-btn').disabled) return;
+    btn.disabled = false; btn.textContent = 'Run Again';
+  }
+}
+
+function renderPredResult(r) {
+  const el = document.getElementById('pred-result');
+  const acc = r.metrics?.accuracy != null ? (r.metrics.accuracy*100).toFixed(1)+'%' : null;
+  const mae = r.metrics?.mae      != null ? r.metrics.mae : null;
+  const task = r.task_type === 'classify' ? 'Classification' : 'Regression';
+  const sample = (r.predictions||[]).slice(0,12);
+  const conf   = (r.confidence||[]).slice(0,12);
+  const hasConf = conf.length > 0;
+
+  el.innerHTML = `
+    <div class="pred-result">
+      <div class="metric-row">
+        <div class="metric-box"><div class="metric-label">Task</div><div class="metric-val" style="font-size:13px">${task}</div></div>
+        <div class="metric-box"><div class="metric-label">Predicted</div><div class="metric-val">${r.n_test_rows}</div></div>
+        ${acc ? `<div class="metric-box"><div class="metric-label">Accuracy</div><div class="metric-val">${acc}</div></div>` : ''}
+        ${mae ? `<div class="metric-box"><div class="metric-label">MAE</div><div class="metric-val">${mae}</div></div>` : ''}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:7px">Showing first ${sample.length} of ${r.n_test_rows} predictions</div>
+      <table class="pred-table">
+        <thead><tr><th>#</th><th>${esc(r.target_column)}</th>${hasConf?'<th>Confidence</th>':''}</tr></thead>
+        <tbody>${sample.map((p,i) => `<tr><td>${i+1}</td><td><strong>${esc(String(p))}</strong></td>${hasConf?`<td>${(conf[i]*100).toFixed(1)}%</td>`:''}</tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  el.classList.remove('hidden');
+  document.getElementById('pred-btn').disabled = false;
+  document.getElementById('pred-btn').textContent = 'Run Again';
+}
+
+// Close modal on overlay click
+document.getElementById('pred-modal').addEventListener('click', e => { if (e.target.id==='pred-modal') closePred(); });
+
+// ═══════════════════════════════════════════════════════
+//  Input UX
+// ═══════════════════════════════════════════════════════
+function onKey(e) { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
+function autoGrow(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,160)+'px'; }
+function fillInput(txt) {
+  const ta = document.getElementById('msg-input');
+  ta.value = txt; autoGrow(ta); ta.focus();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Markdown / HTML
+// ═══════════════════════════════════════════════════════
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function mdHtml(raw) {
+  // Extract code blocks before escaping
+  const blocks = [];
+  let t = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, (_,c) => {
+    blocks.push(c.trim());
+    return '\x00BLOCK' + (blocks.length-1) + '\x00';
+  });
+  t = esc(t);
+  // Restore code blocks
+  t = t.replace(/\x00BLOCK(\d+)\x00/g, (_,i) =>
+    `<pre>${esc(blocks[+i])}</pre>`
+  );
+  // Inline code
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  t = t.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  // Newlines
+  t = t.replace(/\n/g, '<br>');
+  return t;
+}
+
+// ═══════════════════════════════════════════════════════
+//  Toasts
+// ═══════════════════════════════════════════════════════
+function toast(msg, type='info') {
+  const c = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), 3800);
+}
+</script>
+</body>
+</html>

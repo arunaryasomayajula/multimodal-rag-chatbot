@@ -7,8 +7,8 @@ class BM25Index:
         self._corpus: list[dict] = []
         self._index: BM25Okapi | None = None
 
-    def build(self):
-        self._corpus = scroll_all_chunks()
+    def build(self, user_id: str | None = None):
+        self._corpus = scroll_all_chunks(user_id=user_id)
         tokenized = [doc["content"].lower().split() for doc in self._corpus]
         if tokenized:
             self._index = BM25Okapi(tokenized)
@@ -25,8 +25,16 @@ class BM25Index:
         ]
 
 
-_bm25_index = BM25Index()
+# Per-user BM25 indices keyed by user_id; None key = unauthenticated/global
+_indices: dict[str | None, BM25Index] = {}
 
 
-def get_bm25_index() -> BM25Index:
-    return _bm25_index
+def get_bm25_index(user_id: str | None = None) -> BM25Index:
+    if user_id not in _indices:
+        _indices[user_id] = BM25Index()
+    return _indices[user_id]
+
+
+def rebuild_index(user_id: str | None = None):
+    idx = get_bm25_index(user_id)
+    idx.build(user_id=user_id)

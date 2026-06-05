@@ -4,9 +4,10 @@ from ingestion.loaders.pdf_loader import load_pdf
 from ingestion.chunker import chunk_raw
 from ingestion.embedder import embed_texts
 from retrieval.vector_store import ensure_collection, upsert_chunks
-from retrieval.bm25 import get_bm25_index
+from retrieval.bm25 import rebuild_index
 from db.session import SessionLocal
 from db.models import Document, Chunk
+import auth.models  # noqa: F401 — registers users table so FK on Document/Chunk resolves
 
 LOADERS = {
     ".txt": load_text,
@@ -16,7 +17,7 @@ LOADERS = {
 }
 
 
-def ingest_file(path: str | Path) -> int:
+def ingest_file(path: str | Path, user_id: str | None = None) -> int:
     path = Path(path)
     loader = LOADERS.get(path.suffix.lower())
     if loader is None:
@@ -29,14 +30,14 @@ def ingest_file(path: str | Path) -> int:
     texts = [c["content"] for c in chunks]
     vectors = embed_texts(texts)
 
-    doc_id = _persist_to_postgres(path, chunks)
-    upsert_chunks(chunks, vectors, doc_id)
-    get_bm25_index().build()
+    doc_id = _persist_to_postgres(path, chunks, user_id)
+    upsert_chunks(chunks, vectors, doc_id, user_id=user_id)
+    rebuild_index(user_id=user_id)
 
     return len(chunks)
 
 
-def _persist_to_postgres(path: Path, chunks: list[dict]) -> str:
+def _persist_to_postgres(path: Path, chunks: list[dict], user_id: str | None) -> str:
     import uuid
     doc_id = str(uuid.uuid4())
     modality = chunks[0].get("modality", "text") if chunks else "text"
@@ -44,6 +45,7 @@ def _persist_to_postgres(path: Path, chunks: list[dict]) -> str:
     with SessionLocal() as db:
         doc = Document(
             id=doc_id,
+            user_id=user_id,
             filename=path.name,
             modality=modality,
             chunk_count=len(chunks),
@@ -51,6 +53,7 @@ def _persist_to_postgres(path: Path, chunks: list[dict]) -> str:
         db.add(doc)
         for c in chunks:
             db.add(Chunk(
+                user_id=user_id,
                 doc_id=doc_id,
                 content=c["content"],
                 chunk_index=c["chunk_index"],

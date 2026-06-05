@@ -1,6 +1,11 @@
 # Environment — never commit secrets
 .env
 
+# Claude Code internal files — not relevant for contributors
+.claude/
+LEAN-CTX.md
+AGENTS.md
+
 # Uploaded documents
 uploads/
 

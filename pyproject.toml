@@ -35,8 +35,19 @@ dependencies = [
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
+    # Auth
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.0.0",
+    "cryptography>=42.0.0",
+    # Tabular prediction
+    "tabicl>=0.1.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    # Orchestration
+    "langgraph>=0.2.0",
+    "langchain-core>=0.2.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["api*", "db*", "ingestion*", "retrieval*", "generation*", "eval*"]
+include = ["api*", "auth*", "db*", "ingestion*", "retrieval*", "generation*", "eval*"]

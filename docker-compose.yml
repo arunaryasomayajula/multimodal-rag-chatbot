@@ -39,12 +39,109 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  # ── vLLM: Qwen3-4B  (port 8001) ─────────────────────────────────────────────
+  # Start:  docker compose --profile qwen up -d
+  # VRAM:   ~8 GB (bfloat16)  |  No HF token required (Apache-2.0)
+  vllm-qwen:
+    image: vllm/vllm-openai:latest
+    container_name: rag_vllm_qwen
+    profiles: ["gpu", "qwen"]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8001:8000"
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    command: >
+      --model Qwen/Qwen3-4B
+      --served-model-name qwen3:4b
+      --max-model-len 8192
+      --dtype bfloat16
+      --trust-remote-code
+      --gpu-memory-utilization 0.45
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── vLLM: Llama-3.2-3B  (port 8002) ──────────────────────────────────────
+  # Start:  docker compose --profile llama up -d
+  # VRAM:   ~6 GB (bfloat16)
+  # ⚠ Requires: HF_TOKEN in .env + licence accepted at
+  #             https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+  vllm-llama:
+    image: vllm/vllm-openai:latest
+    container_name: rag_vllm_llama
+    profiles: ["gpu", "llama"]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8002:8000"
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    command: >
+      --model meta-llama/Llama-3.2-3B-Instruct
+      --served-model-name llama3.2:3b
+      --max-model-len 8192
+      --dtype bfloat16
+      --gpu-memory-utilization 0.30
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── vLLM: Mistral-7B  (port 8003) ────────────────────────────────────────
+  # Start:  docker compose --profile mistral up -d
+  # VRAM:   ~14 GB (bfloat16) — use --dtype float16 to reduce to ~7 GB
+  # No HF token required (Apache-2.0)
+  vllm-mistral:
+    image: vllm/vllm-openai:latest
+    container_name: rag_vllm_mistral
+    profiles: ["gpu", "mistral"]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8003:8000"
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    command: >
+      --model mistralai/Mistral-7B-Instruct-v0.3
+      --served-model-name mistral:7b
+      --max-model-len 8192
+      --dtype bfloat16
+      --gpu-memory-utilization 0.45
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
   api:
     build: .
+    image: rag-chatbot-app:latest
     container_name: rag_api
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - PYTHONPATH=/app
     volumes:
       - ./uploads:/app/uploads
     depends_on:
@@ -60,9 +157,12 @@ services:
 
   celery:
     build: .
+    image: rag-chatbot-app:latest
     container_name: rag_celery
     command: celery -A ingestion.tasks worker --loglevel=info --concurrency=2
     env_file: .env
+    environment:
+      - PYTHONPATH=/app
     volumes:
       - ./uploads:/app/uploads
     depends_on:
@@ -84,8 +184,13 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-this-secret}
+      # Wire Open WebUI to our RAG API as the primary OpenAI-compatible backend
+      - OPENAI_API_BASE_URL=http://rag_api:8000/v1
+      - OPENAI_API_KEY=${RAG_API_KEY:-6cdee4cf66efa4a0b913e7954d1149a01e2e13df92799f9d}
     volumes:
       - open_webui_data:/app/backend/data
+    depends_on:
+      - api
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -95,3 +200,4 @@ volumes:
   postgres_data:
   redis_data:
   open_webui_data:
+  huggingface_cache:

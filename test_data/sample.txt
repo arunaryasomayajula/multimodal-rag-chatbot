@@ -1,0 +1,22 @@
+The Iris flower dataset is one of the most famous datasets in machine learning.
+
+It was introduced by Ronald Fisher in 1936 as an example of linear discriminant analysis.
+The dataset contains 150 samples from three species of Iris flowers:
+- Iris setosa
+- Iris versicolor
+- Iris virginica
+
+Each sample has four features measured in centimetres:
+- Sepal length
+- Sepal width
+- Petal length
+- Petal width
+
+Setosa is easily separable from the other two species based on petal length and width.
+Versicolor and virginica overlap somewhat and are harder to distinguish.
+
+The dataset is commonly used for testing classification algorithms including:
+k-nearest neighbours, support vector machines, decision trees, and neural networks.
+
+Fisher collected the data from the Gaspe Peninsula in Quebec, Canada.
+All measurements are in centimetres and represent real morphological measurements.

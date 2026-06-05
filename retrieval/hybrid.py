@@ -5,9 +5,10 @@ from config import settings
 _RRF_K = 60
 
 
-def hybrid_search(query: str, query_vector: list[float]) -> list[dict]:
-    dense = dense_search(query_vector, top_k=settings.top_k_retrieve)
-    bm25 = get_bm25_index().search(query, top_k=settings.top_k_retrieve)
+def hybrid_search(query: str, query_vector: list[float],
+                  user_id: str | None = None) -> list[dict]:
+    dense = dense_search(query_vector, top_k=settings.top_k_retrieve, user_id=user_id)
+    bm25 = get_bm25_index(user_id).search(query, top_k=settings.top_k_retrieve)
     return _rrf_fuse(dense, bm25)
 
 

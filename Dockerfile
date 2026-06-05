@@ -12,7 +12,12 @@ WORKDIR /app
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
 
+# CACHEBUST invalidates the COPY layer without re-running pip install.
+# Pass --build-arg CACHEBUST=$(date +%s) to pick up code changes quickly.
+ARG CACHEBUST=1
 COPY . .
+
+ENV PYTHONPATH=/app
 
 RUN mkdir -p uploads
 
