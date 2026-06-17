@@ -421,17 +421,35 @@ The built-in single-page application, served by FastAPI at the root path.
 **Sidebar**
 - **Foundation Model** — dropdown listing all registered LLMs, grouped by provider. Select any model; the choice is persisted across page refreshes. Hovering over a selection shows the backend type and VRAM requirement.
 - **Upload Document** — drag-and-drop or click to upload PDF / TXT / MD / RST for RAG, or CSV / Excel / Parquet for TABICLv2. RAG files are indexed asynchronously (progress shown inline); tabular files are synchronous.
-- **TABICLv2 Datasets** — lists every dataset uploaded by the logged-in user. "Activate" wires the dataset to the current chat session so prediction keywords route to TABICLv2. "Predict" opens a full prediction modal with column selection, task-type override, and a results table.
+- **TABICLv2 Datasets** — lists every dataset uploaded by the logged-in user. "Activate" wires the dataset to the current chat session so prediction keywords route to TABICLv2. "Predict" opens the full [prediction modal](#prediction-modal).
 
 **Chat area**
 - Every assistant message carries a route badge: `🔍 RAG` (green) or `📊 TABICLv2` (purple).
 - RAG answers show a collapsible source citations panel with file name and page number.
-- Tabular answers show a result card with task type, rows predicted, and accuracy/MAE.
+- Tabular answers show a result card with task type and rows predicted, and the reply text carries a compact one-line metrics summary (e.g. `Accuracy: 0.96 · F1 (macro): 0.95 · ROC-AUC: 0.98`) plus a note of any explanations computed. Open the Predict modal for the full table, metrics grid, and explanations.
 - Animated thinking indicator while the model is generating.
 - Suggestion chips on empty state.
 - `Enter` to send, `Shift+Enter` for newline.
 
 **New chat** — clears session ID, deactivates active dataset, resets conversation history.
+
+#### Prediction modal
+
+Launched from the **Predict** button on any dataset. Configure and run a TABICLv2 prediction without leaving the page:
+
+- **Target column** — any column from the dataset.
+- **Task type** — `Auto-detect` (≤20 unique values → classification), or force `Classification`, `Regression`, `Time series`, or `Clustering`.
+- **In-context examples** — number of context rows for in-context learning (default 50).
+- **Compute performance metrics** (on by default) — returns the task-appropriate metric set.
+- **Explain predictions** (off by default) — computes SHAP, LIME, and permutation feature importance. Slower; the button shows a longer-running state while it works.
+
+The results panel renders, in order:
+
+1. **Headline cards** — task, rows predicted, context rows, and the top task metrics (accuracy/F1 for classification, R²/RMSE for regression).
+2. **Predictions table** — first rows with per-row confidence when available.
+3. **Performance metrics grid** — the full metric set (precision/recall/F1, RMSE/R²/MAPE, etc.).
+4. **Confusion matrix** (classification) or **residual summary** (regression), from the visualization payload.
+5. **Explanations** — ranked horizontal bars for feature importance, mean \|SHAP contribution\|, and mean \|LIME weight\| per feature, using the dataset's real column names. Any per-method failure is surfaced inline rather than failing the whole prediction.
 
 **Register / Sign in** — the login screen has two tabs: "Sign in" for returning users and "Create account" for first-time registration. The API validates and auto-logs-in after successful registration.
 
@@ -746,7 +764,7 @@ Run TABICLv2 zero-shot prediction with optional metrics and interpretability.
     "feature_importance": [
       {
         "sample_idx": 0,
-        "importance_scores": [0.35, 0.28, 0.15, 0.22],
+        "global_importance_scores": [0.35, 0.28, 0.15, 0.22],
         "feature_names": ["sepal_length", "sepal_width", "petal_length", "petal_width"],
         "top_k": 10
       }
@@ -771,10 +789,12 @@ Run TABICLv2 zero-shot prediction with optional metrics and interpretability.
       }
     ]
   },
-  "summary": "TABICLv2 classification on 'iris.csv': predicted 100 rows for column 'species'. Accuracy: 0.96",
+  "summary": "TABICLv2 classification on 'iris.csv': predicted 100 rows for 'species'.\n\n**Metrics** — Accuracy: 0.9600 · F1 (macro): 0.9600 · Precision (macro): 0.9600 · Recall (macro): 0.9600",
   "result_id": "550e8400-..."
 }
 ```
+
+> If metrics computation fails for any reason, the prediction still succeeds and the response carries a `metrics_error` string instead of `metrics` — the request never 500s on a metrics issue. Classification metrics are computed directly from the confusion matrix, so string, float, or non-contiguous integer labels are all handled. For binary classification, `roc_auc` is computed from the positive-class probability.
 
 **Metrics by task type:**
 
@@ -1065,7 +1085,13 @@ Three model-agnostic explainers provide different perspectives:
 | **SHAP** | 2–5s | Additive feature contributions | Per-sample Shapley explanations |
 | **LIME** | 1–2s | Local linear coefficients | Local decision boundary insights |
 
-All methods work with any model and gracefully degrade on error.
+Explanations carry the dataset's **real column names** (not `feature_0`, `feature_1`, …). Each method runs independently: if one fails it returns a `<method>_error` field in `interpretability` and the others still complete. Enable explanations from the API (`include_interpretability: true`) or the **Explain predictions** checkbox in the [prediction modal](#prediction-modal). They are off by default because they add noticeable latency.
+
+### Robustness
+
+- **Metrics never break a prediction.** Metric computation is isolated — on failure the response carries `metrics_error` and the predictions/explanations are still returned.
+- **Any label dtype.** Classification metrics derive class support from the confusion matrix, so string, float, and non-contiguous integer targets all work.
+- **Calibrated binary ROC-AUC.** For binary classification, `roc_auc` uses the positive-class probability rather than the displayed max-probability confidence.
 
 ### Session storage
 
@@ -1083,7 +1109,7 @@ POST /predict?save_result=true&notes="Testing new threshold"
 
 ```bash
 # Full analysis: metrics + interpretability + save
-curl -X POST http://localhost:8000/api/predict \
+curl -X POST http://localhost:8000/predict \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
