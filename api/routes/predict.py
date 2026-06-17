@@ -23,6 +23,10 @@ class PredictRequest(BaseModel):
         description="List of ['feature_importance', 'shap', 'lime']. If None, all are computed."
     )
     n_samples_explain: int = Field(default=100, ge=1, le=1000, description="Number of samples to explain")
+    drop_columns: Optional[List[str]] = Field(
+        default=None,
+        description="Columns to exclude from the feature set (e.g. ID columns). The target column is never dropped.",
+    )
     save_result: bool = Field(default=False, description="Save result to session storage")
     notes: Optional[str] = Field(default=None, description="User notes about this prediction")
 
@@ -85,6 +89,7 @@ def predict(req: PredictRequest, current_user: User = Depends(get_current_user),
             include_interpretability=req.include_interpretability,
             interpretability_methods=req.interpretability_methods,
             n_samples_explain=req.n_samples_explain,
+            drop_columns=req.drop_columns,
         )
         
         # Optionally save to database

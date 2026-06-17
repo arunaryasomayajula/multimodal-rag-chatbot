@@ -438,6 +438,7 @@ The built-in single-page application, served by FastAPI at the root path.
 Launched from the **Predict** button on any dataset. Configure and run a TABICLv2 prediction without leaving the page:
 
 - **Target column** — any column from the dataset.
+- **Drop columns** — a checkbox list of every column; tick ID-like or irrelevant columns to exclude them from the feature set. The target column is auto-disabled (it can't be dropped) and the selection follows the target if you change it. Dropped columns are echoed back in the result.
 - **Task type** — `Auto-detect` (≤20 unique values → classification), or force `Classification`, `Regression`, `Time series`, or `Clustering`.
 - **In-context examples** — number of context rows for in-context learning (default 50).
 - **Compute performance metrics** (on by default) — returns the task-appropriate metric set.
@@ -714,6 +715,7 @@ Run TABICLv2 zero-shot prediction with optional metrics and interpretability.
   "include_interpretability": false,
   "interpretability_methods": ["feature_importance", "shap", "lime"],
   "n_samples_explain": 100,
+  "drop_columns": ["row_id"],
   "save_result": false,
   "notes": "optional user notes"
 }
@@ -729,6 +731,7 @@ Run TABICLv2 zero-shot prediction with optional metrics and interpretability.
 | `include_interpretability` | `false` | true, false | Enable explanations (slower) |
 | `interpretability_methods` | all | feature_importance, shap, lime | Which methods to use |
 | `n_samples_explain` | `100` | 1–1000 | Samples to explain |
+| `drop_columns` | null | list of column names | Columns to exclude from features (e.g. ID columns). The target is never dropped; dropping all features errors. |
 | `save_result` | `false` | true, false | Save to session storage |
 | `notes` | null | any text | User annotations |
 
@@ -741,6 +744,8 @@ Run TABICLv2 zero-shot prediction with optional metrics and interpretability.
   "filename": "iris.csv",
   "n_test_rows": 100,
   "n_context_rows": 50,
+  "dropped_columns": ["row_id"],
+  "feature_columns": ["sepal_length", "sepal_width", "petal_length", "petal_width"],
   "predictions": ["setosa", "versicolor", "virginica", ...],
   "confidence": [0.97, 0.84, 0.91, ...],
   "metrics": {
@@ -1085,7 +1090,9 @@ Three model-agnostic explainers provide different perspectives:
 | **SHAP** | 2–5s | Additive feature contributions | Per-sample Shapley explanations |
 | **LIME** | 1–2s | Local linear coefficients | Local decision boundary insights |
 
-Explanations carry the dataset's **real column names** (not `feature_0`, `feature_1`, …). Each method runs independently: if one fails it returns a `<method>_error` field in `interpretability` and the others still complete. Enable explanations from the API (`include_interpretability: true`) or the **Explain predictions** checkbox in the [prediction modal](#prediction-modal). They are off by default because they add noticeable latency.
+Explanations carry the dataset's **real column names** (not `feature_0`, `feature_1`, …) and work for both **classification and regression**: for classifiers, SHAP and LIME explain the probability of each row's predicted class (via `predict_proba`), so text/categorical labels are handled. Each method runs independently: if one fails it returns a `<method>_error` field in `interpretability` and the others still complete. Enable explanations from the API (`include_interpretability: true`) or the **Explain predictions** checkbox in the [prediction modal](#prediction-modal). They are off by default because they add noticeable latency.
+
+> SHAP and LIME issue a model call per feature perturbation. For in-context models like TabICL each call is a full forward pass, so the per-row methods are bounded to a small sample of rows (≈10 each) and LIME to ≈100 perturbations. The UI aggregates over those rows, so the importance ranking stays representative while latency stays in the tens-of-seconds range rather than minutes.
 
 ### Robustness
 

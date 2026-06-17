@@ -74,10 +74,11 @@ def run_prediction(
     include_interpretability: bool = False,
     interpretability_methods: Optional[List[str]] = None,
     n_samples_explain: int = 100,
+    drop_columns: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Run tabular prediction with comprehensive metrics and optional interpretability.
-    
+
     Args:
         dataset_id: ID of uploaded dataset
         user_id: User ID for access control
@@ -88,7 +89,9 @@ def run_prediction(
         include_interpretability: Whether to compute interpretability
         interpretability_methods: List of ["feature_importance", "shap", "lime"] (all if not specified)
         n_samples_explain: Number of samples to explain (for efficiency)
-        
+        drop_columns: Columns to exclude from the feature set (e.g. ID columns).
+            The target column is never dropped even if listed.
+
     Returns:
         Dict with predictions, metrics, explanations, and visualization data
     """
@@ -99,7 +102,17 @@ def run_prediction(
 
     # Clean data
     df = df.dropna(subset=[target_column])
+
+    # Drop user-excluded columns (e.g. ID columns) from the feature set.
+    dropped_columns = []
+    if drop_columns:
+        dropped_columns = [c for c in drop_columns if c in df.columns and c != target_column]
+        if dropped_columns:
+            df = df.drop(columns=dropped_columns)
+
     X = df.drop(columns=[target_column])
+    if X.shape[1] == 0:
+        raise ValueError("No feature columns remain after dropping columns; keep at least one.")
     y = df[target_column]
 
     # Encode categoricals
@@ -123,6 +136,8 @@ def run_prediction(
         "filename": filename,
         "n_test_rows": len(X_test),
         "n_context_rows": len(X_ctx),
+        "dropped_columns": dropped_columns,
+        "feature_columns": feature_names,
     }
 
     # Train model based on task type
@@ -266,6 +281,15 @@ def _compute_interpretability(
     """
     explanations = {}
 
+    # SHAP/LIME issue a model call per feature-perturbation. For in-context
+    # models such as TabICL every call is a full forward pass over the context,
+    # so the per-row methods are bounded to keep latency reasonable. The UI
+    # aggregates over the explained rows, so a representative sample is enough.
+    SHAP_MAX_ROWS = 10
+    LIME_MAX_ROWS = 10
+    LIME_PERTURBATIONS = 100
+    n_test = len(X_test)
+
     try:
         if "feature_importance" in interpretability_methods:
             explainer = FeatureImportanceExplainer(model, X_ctx, y_ctx)
@@ -278,9 +302,10 @@ def _compute_interpretability(
 
     try:
         if "shap" in interpretability_methods:
+            shap_rows = min(n_samples, SHAP_MAX_ROWS, n_test)
             explainer = SHAPExplainer(model, X_ctx, y_ctx, background_size=min(50, len(X_ctx)))
             explainer.feature_names = feature_names
-            expl = explainer.explain_predictions(X_test[:n_samples], n_samples=n_samples)
+            expl = explainer.explain_predictions(X_test[:shap_rows], n_samples=shap_rows)
             explanations["shap"] = expl
 
     except Exception as e:
@@ -288,9 +313,10 @@ def _compute_interpretability(
 
     try:
         if "lime" in interpretability_methods:
-            explainer = LIMEExplainer(model, X_ctx, y_ctx, n_samples=500)
+            lime_rows = min(n_samples, LIME_MAX_ROWS, n_test)
+            explainer = LIMEExplainer(model, X_ctx, y_ctx, n_samples=LIME_PERTURBATIONS)
             explainer.feature_names = feature_names
-            expl = explainer.explain_predictions(X_test[:n_samples], n_samples=min(50, len(X_test)))
+            expl = explainer.explain_predictions(X_test[:lime_rows], n_samples=lime_rows)
             explanations["lime"] = expl
 
     except Exception as e:

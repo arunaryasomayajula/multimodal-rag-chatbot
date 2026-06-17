@@ -198,6 +198,11 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
 .imp-val{flex:0 0 56px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .cm-table td{text-align:center;font-variant-numeric:tabular-nums}
 .cm-table .cm-diag{background:rgba(139,92,246,.18);font-weight:700;color:var(--text)}
+.drop-list{max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--surface);display:flex;flex-direction:column;gap:2px}
+.drop-item{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);padding:3px 5px;border-radius:4px;cursor:pointer}
+.drop-item:hover{background:rgba(139,92,246,.06)}
+.drop-item.drop-disabled{color:var(--muted);cursor:not-allowed}
+.drop-tag{font-size:9px;text-transform:uppercase;letter-spacing:.05em;background:var(--surface2);color:var(--muted);padding:1px 5px;border-radius:8px;margin-left:auto}
 
 /* ═══════════════════════════════════════════
    TOASTS
@@ -340,7 +345,12 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">Target Column</label>
-        <select class="model-select" id="pred-col"></select>
+        <select class="model-select" id="pred-col" onchange="renderDropList()"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Drop columns (excluded from features)</label>
+        <div class="drop-list" id="pred-drop"></div>
+        <p class="tab-note" style="margin-top:5px">Check ID-like or irrelevant columns to exclude them from the prediction. The target column can't be dropped.</p>
       </div>
       <div class="form-group">
         <label class="form-label">Task Type</label>
@@ -879,12 +889,37 @@ function openPred(btn) {
   const ds = S.datasets.find(d => d.id === id);
   if (!ds) { toast('Dataset not found', 'error'); return; }
   S.predDs = id;
+  S.predCols = ds.column_names || [];
+  S.predDrop = new Set();
   const sel = document.getElementById('pred-col');
-  sel.innerHTML = ds.column_names.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.innerHTML = S.predCols.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  renderDropList();
   document.getElementById('pred-result').classList.add('hidden');
   document.getElementById('pred-btn').disabled = false;
   document.getElementById('pred-btn').textContent = 'Run Prediction';
   document.getElementById('pred-modal').classList.remove('hidden');
+}
+
+// Build the drop-column checkbox list; the current target can't be dropped.
+function renderDropList() {
+  const cont = document.getElementById('pred-drop');
+  const target = document.getElementById('pred-col').value;
+  const cols = S.predCols || [];
+  if (!S.predDrop) S.predDrop = new Set();
+  S.predDrop.delete(target);  // target is never a droppable feature
+  cont.innerHTML = cols.map(c => {
+    const isTarget = c === target;
+    const checked = S.predDrop.has(c) ? 'checked' : '';
+    return `<label class="drop-item${isTarget ? ' drop-disabled' : ''}">
+      <input type="checkbox" value="${esc(c)}" ${isTarget ? 'disabled' : ''} ${checked} onchange="toggleDrop(this)">
+      ${esc(c)}${isTarget ? '<span class="drop-tag">target</span>' : ''}
+    </label>`;
+  }).join('');
+}
+
+function toggleDrop(cb) {
+  if (!S.predDrop) S.predDrop = new Set();
+  if (cb.checked) S.predDrop.add(cb.value); else S.predDrop.delete(cb.value);
 }
 
 function closePred() {
@@ -898,6 +933,7 @@ async function runPred() {
   const ctx  = parseInt(document.getElementById('pred-ctx').value) || 50;
   const wantMetrics = document.getElementById('pred-metrics').checked;
   const wantInterp  = document.getElementById('pred-interp').checked;
+  const dropCols = Array.from(S.predDrop || []).filter(c => c !== col);
   const btn  = document.getElementById('pred-btn');
   btn.disabled = true; btn.textContent = wantInterp ? 'Running… (explanations take longer)' : 'Running…';
 
@@ -907,6 +943,7 @@ async function runPred() {
       include_metrics: wantMetrics,
       include_interpretability: wantInterp,
       interpretability_methods: wantInterp ? ['feature_importance', 'shap', 'lime'] : null,
+      drop_columns: dropCols.length ? dropCols : null,
     });
     renderPredResult(r);
   } catch(err) {
@@ -1077,6 +1114,7 @@ function renderPredResult(r) {
         ${headline.map(([l,v]) => `<div class="metric-box"><div class="metric-label">${l}</div><div class="metric-val">${v}</div></div>`).join('')}
       </div>
 
+      ${(r.dropped_columns && r.dropped_columns.length) ? `<div style="font-size:11px;color:var(--muted);margin:4px 0 0">Dropped from features: ${r.dropped_columns.map(c => esc(c)).join(', ')}</div>` : ''}
       <div style="font-size:11px;color:var(--muted);margin:4px 0 7px">Showing first ${sample.length} of ${r.n_test_rows} predictions</div>
       <table class="pred-table">
         <thead><tr><th>#</th><th>${esc(r.target_column)}</th>${hasConf?'<th>Confidence</th>':''}</tr></thead>

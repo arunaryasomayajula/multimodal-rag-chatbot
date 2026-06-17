@@ -37,7 +37,7 @@ class LIMEExplainer(Explainer):
             "coefficients": coefficients.tolist(),
             "feature_names": feature_names,
             "feature_values": x[0].tolist(),
-            "prediction": float(self.model.predict(x)[0]),
+            "prediction": self._jsonable_prediction(self.model.predict(x)[0]),
             "intercept": 0.0,  # Included in coefficients
         }
 
@@ -69,7 +69,7 @@ class LIMEExplainer(Explainer):
                 "coefficients": coefficients.tolist(),
                 "feature_names": feature_names,
                 "feature_values": X_sample[i].tolist(),
-                "prediction": float(predictions[i]),
+                "prediction": self._jsonable_prediction(predictions[i]),
             })
         
         return explanations
@@ -85,10 +85,12 @@ class LIMEExplainer(Explainer):
         """
         # Generate perturbed samples
         X_perturbed = self._generate_perturbed_samples(x)
-        
-        # Get model predictions
-        y_perturbed = self.model.predict(X_perturbed)
-        
+
+        # Numeric target for the local regression. For classifiers this is the
+        # probability of x's predicted class (string labels would break lstsq).
+        target_class = self._instance_target_class(x) if self._is_classifier() else None
+        y_perturbed = self._score(X_perturbed, class_idx=target_class)
+
         # Compute kernel distances
         distances = self._compute_kernel_distance(x, X_perturbed)
         weights = np.exp(-distances ** 2 / (2 * self.kernel_width ** 2))

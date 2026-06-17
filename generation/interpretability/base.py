@@ -54,3 +54,42 @@ class Explainer(ABC):
         if names is not None and len(names) == self.X_train.shape[1]:
             return list(names)
         return [f"feature_{i}" for i in range(self.X_train.shape[1])]
+
+    # ── Numeric prediction signal ────────────────────────────────────────
+    # SHAP/LIME need a numeric output to differentiate. For regressors that is
+    # the prediction itself; for classifiers (string/categorical labels) we use
+    # the probability of a chosen class, which is always numeric.
+
+    def _is_classifier(self) -> bool:
+        return hasattr(self.model, "predict_proba")
+
+    def _instance_target_class(self, x: np.ndarray) -> int:
+        """Index (into predict_proba columns) of the predicted class for x."""
+        proba = self.model.predict_proba(np.asarray(x).reshape(1, -1))[0]
+        return int(np.argmax(proba))
+
+    def _score(self, X: np.ndarray, class_idx=None) -> np.ndarray:
+        """
+        Numeric model output for rows of X.
+
+        - Regressor: the raw prediction (float).
+        - Classifier: probability of ``class_idx`` (defaults to each row's own
+          predicted class) — a continuous, differentiable signal SHAP/LIME can use.
+        """
+        X = np.asarray(X)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        if self._is_classifier():
+            proba = np.asarray(self.model.predict_proba(X))
+            if class_idx is None:
+                return proba[np.arange(len(proba)), np.argmax(proba, axis=1)]
+            return proba[:, class_idx]
+        return np.asarray(self.model.predict(X), dtype=float)
+
+    @staticmethod
+    def _jsonable_prediction(value) -> Any:
+        """Return a JSON-serializable prediction (float for numbers, str for labels)."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return str(value)
