@@ -1,12 +1,26 @@
 """
-TABICLv2 wrapper for zero-shot tabular prediction.
+TABICLv2 wrapper for zero-shot tabular prediction with comprehensive metrics and interpretability.
 Uses tabicl.TabICLClassifier / TabICLRegressor (sklearn-compatible).
+Includes metrics calculators, interpretability (SHAP/LIME/Feature Importance), and visualization support.
 """
 import re
 import numpy as np
 import pandas as pd
+from typing import Optional, Dict, Any, List
 from db.session import SessionLocal
 from db.models import TabularDataset
+from generation.metrics import (
+    RegressionMetrics,
+    ClassificationMetrics,
+    TimeSeriesMetrics,
+    ClusteringMetrics,
+)
+from generation.interpretability import (
+    FeatureImportanceExplainer,
+    SHAPExplainer,
+    LIMEExplainer,
+)
+from generation.visualization import PlotGenerator, MetricsFormatter
 
 
 def _load_dataset_df(dataset_id: str, user_id: str) -> tuple[pd.DataFrame, str]:
@@ -36,9 +50,18 @@ def _load_dataset_df(dataset_id: str, user_id: str) -> tuple[pd.DataFrame, str]:
 
 
 def _detect_task_type(series: pd.Series) -> str:
+    """Auto-detect task type: classification or regression."""
     if series.dtype == object or series.nunique() <= 20:
-        return "classify"
-    return "regress"
+        return "classification"
+    return "regression"
+
+
+def _encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
+    """Encode categorical columns numerically for model input."""
+    df_enc = df.copy()
+    for col in df_enc.select_dtypes(include="object").columns:
+        df_enc[col] = df_enc[col].astype("category").cat.codes
+    return df_enc
 
 
 def run_prediction(
@@ -47,71 +70,285 @@ def run_prediction(
     target_column: str,
     context_rows: int = 50,
     task_type: str = "auto",
-) -> dict:
+    include_metrics: bool = True,
+    include_interpretability: bool = False,
+    interpretability_methods: Optional[List[str]] = None,
+    n_samples_explain: int = 100,
+) -> Dict[str, Any]:
+    """
+    Run tabular prediction with comprehensive metrics and optional interpretability.
+    
+    Args:
+        dataset_id: ID of uploaded dataset
+        user_id: User ID for access control
+        target_column: Column to predict
+        context_rows: Number of rows for in-context learning
+        task_type: "auto", "classification", "regression", "time_series", or "clustering"
+        include_metrics: Whether to compute metrics
+        include_interpretability: Whether to compute interpretability
+        interpretability_methods: List of ["feature_importance", "shap", "lime"] (all if not specified)
+        n_samples_explain: Number of samples to explain (for efficiency)
+        
+    Returns:
+        Dict with predictions, metrics, explanations, and visualization data
+    """
     df, filename = _load_dataset_df(dataset_id, user_id)
 
     if target_column not in df.columns:
         raise ValueError(f"Column '{target_column}' not in dataset")
 
+    # Clean data
     df = df.dropna(subset=[target_column])
     X = df.drop(columns=[target_column])
     y = df[target_column]
 
-    # Encode categoricals numerically for TABICLv2
-    X_enc = X.copy()
-    for col in X_enc.select_dtypes(include="object").columns:
-        X_enc[col] = X_enc[col].astype("category").cat.codes
+    # Encode categoricals
+    X_enc = _encode_categoricals(X)
+    feature_names = list(X_enc.columns)
 
+    # Detect task type if auto
     if task_type == "auto":
         task_type = _detect_task_type(y)
 
     # Split: first context_rows as in-context set, rest as test
     n = len(X_enc)
     ctx_n = min(context_rows, max(1, n // 2))
-    X_ctx, y_ctx = X_enc.iloc[:ctx_n], y.iloc[:ctx_n]
-    X_test, y_test = X_enc.iloc[ctx_n:], y.iloc[ctx_n:]
+    X_ctx, y_ctx = X_enc.iloc[:ctx_n].values, y.iloc[:ctx_n].values
+    X_test, y_test = X_enc.iloc[ctx_n:].values, y.iloc[ctx_n:].values
 
-    if task_type == "classify":
-        from tabicl import TabICLClassifier
-        model = TabICLClassifier()
-        model.fit(X_ctx.values, y_ctx.values)
-        preds = model.predict(X_test.values).tolist()
-        try:
-            proba = model.predict_proba(X_test.values)
-            confidence = np.max(proba, axis=1).tolist()
-        except Exception:
-            confidence = []
-        metrics = {}
-        if len(y_test) > 0:
-            correct = sum(p == a for p, a in zip(preds, y_test.tolist()))
-            metrics["accuracy"] = round(correct / len(preds), 4)
-    else:
-        from tabicl import TabICLRegressor
-        model = TabICLRegressor()
-        model.fit(X_ctx.values, y_ctx.values.astype(float))
-        preds = model.predict(X_test.values).tolist()
-        confidence = []
-        metrics = {}
-        if len(y_test) > 0:
-            from sklearn.metrics import mean_absolute_error
-            metrics["mae"] = round(mean_absolute_error(y_test.values.astype(float), preds), 4)
-
-    summary = (
-        f"TABICLv2 {'classification' if task_type == 'classify' else 'regression'} "
-        f"on '{filename}': predicted {len(preds)} rows for column '{target_column}'. "
-        + (f"Accuracy: {metrics.get('accuracy', 'N/A')}" if task_type == "classify"
-           else f"MAE: {metrics.get('mae', 'N/A')}")
-    )
-
-    return {
-        "predictions": preds,
-        "confidence": confidence,
-        "metrics": metrics,
-        "summary": summary,
+    # Initialize result
+    result = {
         "task_type": task_type,
         "target_column": target_column,
-        "n_test_rows": len(preds),
+        "filename": filename,
+        "n_test_rows": len(X_test),
+        "n_context_rows": len(X_ctx),
     }
+
+    # Train model based on task type
+    model, preds, confidence, proba = _train_and_predict(
+        X_ctx, y_ctx, X_test, y_test, task_type
+    )
+
+    result["predictions"] = preds
+    result["confidence"] = confidence
+
+    # Compute metrics if requested. Guard so a metrics failure degrades
+    # gracefully instead of failing the whole prediction request.
+    if include_metrics and len(y_test) > 0:
+        try:
+            metrics_calc = _get_metrics_calculator(task_type)
+            # Pass the full class-probability matrix (not the max-prob confidence)
+            # so ROC-AUC uses the positive-class probability for binary tasks.
+            metrics = metrics_calc.calculate(y_test, preds, y_proba=proba)
+
+            result["metrics"] = metrics
+
+            # Add visualization data
+            viz_data = metrics_calc.get_visualization_data(y_test, preds)
+            if viz_data:
+                result["metrics_visualization"] = {
+                    "plot_type": viz_data.get("plot_type"),
+                    "data": viz_data,
+                }
+        except Exception as e:
+            result["metrics_error"] = str(e)
+    
+    # Compute interpretability if requested
+    if include_interpretability and model is not None:
+        if interpretability_methods is None:
+            interpretability_methods = ["feature_importance", "shap", "lime"]
+        
+        explanations = _compute_interpretability(
+            model, X_ctx, y_ctx, X_test, preds,
+            interpretability_methods=interpretability_methods,
+            n_samples=n_samples_explain,
+            feature_names=feature_names,
+        )
+        
+        result["interpretability"] = explanations
+
+    # Summary
+    result["summary"] = _generate_summary(result, filename)
+
+    return result
+
+
+def _train_and_predict(
+    X_ctx: np.ndarray,
+    y_ctx: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    task_type: str,
+) -> tuple[Any, List, List, Optional[np.ndarray]]:
+    """
+    Train TabICLv2 model and generate predictions.
+
+    Returns:
+        (model, predictions_list, confidence_list, proba_matrix)
+        proba_matrix is the full class-probability matrix for classification
+        (used for ROC-AUC), or None for other tasks.
+    """
+    model = None
+    preds = []
+    confidence = []
+    proba = None
+
+    if task_type == "classification":
+        from tabicl import TabICLClassifier
+        model = TabICLClassifier()
+        model.fit(X_ctx, y_ctx)
+        preds = model.predict(X_test).tolist()
+
+        try:
+            proba = model.predict_proba(X_test)
+            confidence = np.max(proba, axis=1).tolist()
+        except Exception:
+            proba = None
+            confidence = []
+
+    elif task_type == "regression":
+        from tabicl import TabICLRegressor
+        model = TabICLRegressor()
+        model.fit(X_ctx, y_ctx.astype(float))
+        preds = model.predict(X_test).tolist()
+        confidence = []
+
+    elif task_type == "time_series":
+        # For time series, treat as regression with temporal awareness
+        from tabicl import TabICLRegressor
+        model = TabICLRegressor()
+        model.fit(X_ctx, y_ctx.astype(float))
+        preds = model.predict(X_test).tolist()
+        confidence = []
+
+    elif task_type == "clustering":
+        # Use simple k-means for clustering
+        from sklearn.cluster import KMeans
+        n_clusters = max(2, min(10, len(np.unique(y_ctx))))
+        model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        model.fit(X_ctx)
+        preds = model.predict(X_test).tolist()
+        confidence = []
+
+    return model, preds, confidence, proba
+
+
+def _get_metrics_calculator(task_type: str):
+    """Get appropriate metrics calculator for task type."""
+    if task_type == "classification":
+        return ClassificationMetrics()
+    elif task_type == "regression":
+        return RegressionMetrics()
+    elif task_type == "time_series":
+        return TimeSeriesMetrics()
+    elif task_type == "clustering":
+        return ClusteringMetrics()
+    else:
+        return RegressionMetrics()  # Default
+
+
+def _compute_interpretability(
+    model: Any,
+    X_ctx: np.ndarray,
+    y_ctx: np.ndarray,
+    X_test: np.ndarray,
+    preds: List,
+    interpretability_methods: List[str],
+    n_samples: int = 100,
+    feature_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Compute interpretability explanations.
+
+    Returns:
+        Dict with explanations by method
+    """
+    explanations = {}
+
+    try:
+        if "feature_importance" in interpretability_methods:
+            explainer = FeatureImportanceExplainer(model, X_ctx, y_ctx)
+            explainer.feature_names = feature_names
+            expl = explainer.explain_predictions(X_test[:n_samples])
+            explanations["feature_importance"] = expl
+
+    except Exception as e:
+        explanations["feature_importance_error"] = str(e)
+
+    try:
+        if "shap" in interpretability_methods:
+            explainer = SHAPExplainer(model, X_ctx, y_ctx, background_size=min(50, len(X_ctx)))
+            explainer.feature_names = feature_names
+            expl = explainer.explain_predictions(X_test[:n_samples], n_samples=n_samples)
+            explanations["shap"] = expl
+
+    except Exception as e:
+        explanations["shap_error"] = str(e)
+
+    try:
+        if "lime" in interpretability_methods:
+            explainer = LIMEExplainer(model, X_ctx, y_ctx, n_samples=500)
+            explainer.feature_names = feature_names
+            expl = explainer.explain_predictions(X_test[:n_samples], n_samples=min(50, len(X_test)))
+            explanations["lime"] = expl
+
+    except Exception as e:
+        explanations["lime_error"] = str(e)
+
+    return explanations
+
+
+def _generate_summary(result: Dict[str, Any], filename: str) -> str:
+    """Generate human-readable summary."""
+    task_type = result.get("task_type", "unknown")
+    target = result.get("target_column", "?")
+    n_preds = result.get("n_test_rows", 0)
+    
+    summary = f"TABICLv2 {task_type} on '{filename}': "
+    summary += f"predicted {n_preds} rows for '{target}'. "
+    
+    metrics = result.get("metrics", {})
+    if metrics:
+        summary += "\n\n**Metrics** — " + _format_compact_metrics(task_type, metrics)
+    elif result.get("metrics_error"):
+        summary += f"\n\n_(metrics unavailable: {result['metrics_error']})_"
+
+    # Mention interpretability if it was computed
+    interp = result.get("interpretability", {})
+    methods = [m for m in ("feature_importance", "shap", "lime") if interp.get(m)]
+    if methods:
+        summary += f"\n\nExplanations computed: {', '.join(methods)}."
+
+    return summary
+
+
+def _format_compact_metrics(task_type: str, metrics: Dict[str, Any]) -> str:
+    """Build a one-line, human-readable metrics string for the chat reply."""
+    def g(key):
+        v = metrics.get(key)
+        return f"{v:.4f}" if isinstance(v, (int, float)) else None
+
+    parts = []
+    if task_type == "classification":
+        order = [("Accuracy", "accuracy"), ("F1 (macro)", "macro_f1"),
+                 ("Precision (macro)", "macro_precision"), ("Recall (macro)", "macro_recall"),
+                 ("ROC-AUC", "roc_auc")]
+    elif task_type == "regression":
+        order = [("R²", "r2"), ("MAE", "mae"), ("RMSE", "rmse"), ("MAPE %", "mape")]
+    elif task_type == "time_series":
+        order = [("RMSE", "rmse"), ("MAE", "mae"), ("Direction acc. %", "direction_accuracy"), ("MASE", "mase")]
+    elif task_type == "clustering":
+        order = [("Silhouette", "silhouette_score"), ("Davies-Bouldin", "davies_bouldin_index"),
+                 ("Clusters", "n_clusters")]
+    else:
+        order = [(k, k) for k in metrics]
+
+    for label, key in order:
+        val = g(key)
+        if val is not None:
+            parts.append(f"{label}: {val}")
+    return " · ".join(parts) if parts else "computed."
 
 
 def predict_from_session(dataset_id: str, query: str, user_id: str) -> dict:

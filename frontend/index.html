@@ -187,6 +187,17 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
 .pred-table th{padding:6px 8px;background:var(--surface2);border:1px solid var(--border);font-weight:600;color:var(--muted);text-align:left}
 .pred-table td{padding:5px 8px;border:1px solid var(--border);color:var(--text)}
 .pred-table tr:hover td{background:rgba(139,92,246,.05)}
+.pred-section{margin-top:16px;padding-top:12px;border-top:1px solid var(--border)}
+.pred-section-hd{font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.imp-bars{display:flex;flex-direction:column;gap:5px}
+.imp-row{display:flex;align-items:center;gap:8px;font-size:11px}
+.imp-name{flex:0 0 130px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imp-track{flex:1;height:10px;background:var(--surface2);border-radius:5px;overflow:hidden}
+.imp-fill{display:block;height:100%;background:var(--tabular);border-radius:5px}
+.imp-val{flex:0 0 56px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.cm-table td{text-align:center;font-variant-numeric:tabular-nums}
+.cm-table .cm-diag{background:rgba(139,92,246,.18);font-weight:700;color:var(--text)}
 
 /* ═══════════════════════════════════════════
    TOASTS
@@ -335,13 +346,23 @@ html,body{height:100%;font-family:'Inter',-apple-system,sans-serif;background:va
         <label class="form-label">Task Type</label>
         <select class="model-select" id="pred-task">
           <option value="auto">Auto-detect (≤20 unique values → classify)</option>
-          <option value="classify">Classification</option>
-          <option value="regress">Regression</option>
+          <option value="classification">Classification</option>
+          <option value="regression">Regression</option>
+          <option value="time_series">Time series</option>
+          <option value="clustering">Clustering</option>
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">In-context examples (context rows)</label>
         <input class="form-input" type="number" id="pred-ctx" value="50" min="10" max="500">
+      </div>
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+          <input type="checkbox" id="pred-metrics" checked> Compute performance metrics
+        </label>
+        <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-top:6px">
+          <input type="checkbox" id="pred-interp"> Explain predictions (SHAP · LIME · feature importance)
+        </label>
       </div>
       <button class="btn-primary" id="pred-btn" onclick="runPred()">Run Prediction</button>
       <div id="pred-result" class="hidden"></div>
@@ -875,12 +896,17 @@ async function runPred() {
   const col  = document.getElementById('pred-col').value;
   const task = document.getElementById('pred-task').value;
   const ctx  = parseInt(document.getElementById('pred-ctx').value) || 50;
+  const wantMetrics = document.getElementById('pred-metrics').checked;
+  const wantInterp  = document.getElementById('pred-interp').checked;
   const btn  = document.getElementById('pred-btn');
-  btn.disabled = true; btn.textContent = 'Running…';
+  btn.disabled = true; btn.textContent = wantInterp ? 'Running… (explanations take longer)' : 'Running…';
 
   try {
     const r = await call('POST', '/predict', {
       dataset_id: S.predDs, target_column: col, task_type: task, context_rows: ctx,
+      include_metrics: wantMetrics,
+      include_interpretability: wantInterp,
+      interpretability_methods: wantInterp ? ['feature_importance', 'shap', 'lime'] : null,
     });
     renderPredResult(r);
   } catch(err) {
@@ -892,28 +918,175 @@ async function runPred() {
   }
 }
 
+// Pretty labels for metric keys
+const METRIC_LABELS = {
+  accuracy:'Accuracy', macro_precision:'Precision (macro)', macro_recall:'Recall (macro)',
+  macro_f1:'F1 (macro)', weighted_precision:'Precision (weighted)', weighted_recall:'Recall (weighted)',
+  weighted_f1:'F1 (weighted)', n_classes:'Classes', roc_auc:'ROC-AUC',
+  mae:'MAE', mse:'MSE', rmse:'RMSE', r2:'R²', mape:'MAPE (%)',
+  silhouette_score:'Silhouette', davies_bouldin_index:'Davies-Bouldin',
+  calinski_harabasz_index:'Calinski-Harabasz', n_clusters:'Clusters',
+  direction_accuracy:'Direction acc. (%)', mase:'MASE',
+};
+const TASK_LABELS = { classification:'Classification', regression:'Regression', time_series:'Time series', clustering:'Clustering' };
+
+function fmtNum(v) {
+  if (typeof v !== 'number') return esc(String(v));
+  if (Number.isInteger(v)) return String(v);
+  return v.toFixed(4);
+}
+
+// Aggregate a list of explanation dicts into mean |score| per feature, returning sorted top-K
+function aggregateExplanations(list, scoreKey, topK = 10) {
+  if (!Array.isArray(list) || !list.length) return [];
+  const names = list[0].feature_names || [];
+  const n = names.length;
+  const sums = new Array(n).fill(0);
+  let count = 0;
+  for (const e of list) {
+    const scores = e[scoreKey];
+    if (!Array.isArray(scores)) continue;
+    for (let i = 0; i < n; i++) sums[i] += Math.abs(scores[i] ?? 0);
+    count++;
+  }
+  if (!count) return [];
+  const rows = names.map((name, i) => ({ name, score: sums[i] / count }));
+  rows.sort((a, b) => b.score - a.score);
+  return rows.slice(0, topK);
+}
+
+function importanceBars(rows) {
+  if (!rows.length) return '<p class="tab-note">No feature attributions returned.</p>';
+  const max = Math.max(...rows.map(r => r.score)) || 1;
+  return `<div class="imp-bars">${rows.map(r => `
+    <div class="imp-row">
+      <span class="imp-name" title="${esc(r.name)}">${esc(r.name)}</span>
+      <span class="imp-track"><span class="imp-fill" style="width:${(r.score/max*100).toFixed(1)}%"></span></span>
+      <span class="imp-val">${r.score.toFixed(4)}</span>
+    </div>`).join('')}</div>`;
+}
+
+function renderMetrics(metrics) {
+  if (!metrics || !Object.keys(metrics).length) return '';
+  const entries = Object.entries(metrics).filter(([,v]) => typeof v === 'number');
+  if (!entries.length) return '';
+  return `
+    <div class="pred-section">
+      <div class="pred-section-hd">📈 Performance metrics</div>
+      <div class="metric-grid">
+        ${entries.map(([k,v]) => `
+          <div class="metric-box">
+            <div class="metric-label">${METRIC_LABELS[k] || esc(k)}</div>
+            <div class="metric-val" style="font-size:15px">${fmtNum(v)}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderConfusion(viz) {
+  const d = viz?.data;
+  if (!d || d.plot_type !== 'classification_analysis' || !Array.isArray(d.confusion_matrix)) return '';
+  const classes = d.classes || [];
+  return `
+    <div class="pred-section">
+      <div class="pred-section-hd">🧩 Confusion matrix</div>
+      <table class="pred-table cm-table">
+        <thead><tr><th></th>${classes.map(c => `<th>pred ${esc(String(c))}</th>`).join('')}</tr></thead>
+        <tbody>${d.confusion_matrix.map((row, i) => `
+          <tr><th>true ${esc(String(classes[i]))}</th>${row.map((v, j) => `<td class="${i===j?'cm-diag':''}">${v}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderRegressionViz(viz) {
+  const d = viz?.data;
+  if (!d || d.plot_type !== 'regression_analysis' || !Array.isArray(d.residuals)) return '';
+  const res = d.residuals;
+  const n = res.length;
+  const meanAbs = res.reduce((a,b)=>a+Math.abs(b),0)/(n||1);
+  const maxAbs = Math.max(...res.map(Math.abs), 0);
+  return `
+    <div class="pred-section">
+      <div class="pred-section-hd">📉 Residual summary</div>
+      <div class="metric-grid">
+        <div class="metric-box"><div class="metric-label">Points</div><div class="metric-val" style="font-size:15px">${n}</div></div>
+        <div class="metric-box"><div class="metric-label">Mean |residual|</div><div class="metric-val" style="font-size:15px">${meanAbs.toFixed(4)}</div></div>
+        <div class="metric-box"><div class="metric-label">Max |residual|</div><div class="metric-val" style="font-size:15px">${maxAbs.toFixed(4)}</div></div>
+      </div>
+    </div>`;
+}
+
+function renderInterpretability(interp) {
+  if (!interp || typeof interp !== 'object') return '';
+  const sections = [];
+
+  // Errors surfaced by the backend (per-method)
+  const errs = Object.entries(interp).filter(([k]) => k.endsWith('_error'));
+
+  const fi = aggregateExplanations(interp.feature_importance, 'global_importance_scores');
+  if (fi.length) sections.push(`
+    <div class="pred-section">
+      <div class="pred-section-hd">⭐ Feature importance (permutation)</div>
+      ${importanceBars(fi)}
+    </div>`);
+
+  const shap = aggregateExplanations(interp.shap, 'shap_values');
+  if (shap.length) sections.push(`
+    <div class="pred-section">
+      <div class="pred-section-hd">🔬 SHAP — mean |contribution| per feature</div>
+      ${importanceBars(shap)}
+    </div>`);
+
+  const lime = aggregateExplanations(interp.lime, 'coefficients');
+  if (lime.length) sections.push(`
+    <div class="pred-section">
+      <div class="pred-section-hd">🍋 LIME — mean |local weight| per feature</div>
+      ${importanceBars(lime)}
+    </div>`);
+
+  if (errs.length) sections.push(`
+    <div class="pred-section">
+      <div class="pred-section-hd" style="color:var(--danger,#d9534f)">⚠ Explanation issues</div>
+      ${errs.map(([k,v]) => `<p class="tab-note">${esc(k.replace('_error',''))}: ${esc(String(v))}</p>`).join('')}
+    </div>`);
+
+  return sections.join('');
+}
+
 function renderPredResult(r) {
   const el = document.getElementById('pred-result');
-  const acc = r.metrics?.accuracy != null ? (r.metrics.accuracy*100).toFixed(1)+'%' : null;
-  const mae = r.metrics?.mae      != null ? r.metrics.mae : null;
-  const task = r.task_type === 'classify' ? 'Classification' : 'Regression';
+  const task = TASK_LABELS[r.task_type] || r.task_type;
   const sample = (r.predictions||[]).slice(0,12);
   const conf   = (r.confidence||[]).slice(0,12);
   const hasConf = conf.length > 0;
 
+  // Headline metrics depend on task type
+  const m = r.metrics || {};
+  const headline = [];
+  if (m.accuracy != null) headline.push(['Accuracy', (m.accuracy*100).toFixed(1)+'%']);
+  if (m.macro_f1 != null) headline.push(['F1 (macro)', m.macro_f1.toFixed(3)]);
+  if (m.r2 != null)       headline.push(['R²', m.r2.toFixed(3)]);
+  if (m.rmse != null)     headline.push(['RMSE', m.rmse.toFixed(3)]);
+
   el.innerHTML = `
     <div class="pred-result">
       <div class="metric-row">
-        <div class="metric-box"><div class="metric-label">Task</div><div class="metric-val" style="font-size:13px">${task}</div></div>
+        <div class="metric-box"><div class="metric-label">Task</div><div class="metric-val" style="font-size:13px">${esc(task)}</div></div>
         <div class="metric-box"><div class="metric-label">Predicted</div><div class="metric-val">${r.n_test_rows}</div></div>
-        ${acc ? `<div class="metric-box"><div class="metric-label">Accuracy</div><div class="metric-val">${acc}</div></div>` : ''}
-        ${mae ? `<div class="metric-box"><div class="metric-label">MAE</div><div class="metric-val">${mae}</div></div>` : ''}
+        <div class="metric-box"><div class="metric-label">Context rows</div><div class="metric-val">${r.n_context_rows ?? '—'}</div></div>
+        ${headline.map(([l,v]) => `<div class="metric-box"><div class="metric-label">${l}</div><div class="metric-val">${v}</div></div>`).join('')}
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:7px">Showing first ${sample.length} of ${r.n_test_rows} predictions</div>
+
+      <div style="font-size:11px;color:var(--muted);margin:4px 0 7px">Showing first ${sample.length} of ${r.n_test_rows} predictions</div>
       <table class="pred-table">
         <thead><tr><th>#</th><th>${esc(r.target_column)}</th>${hasConf?'<th>Confidence</th>':''}</tr></thead>
         <tbody>${sample.map((p,i) => `<tr><td>${i+1}</td><td><strong>${esc(String(p))}</strong></td>${hasConf?`<td>${(conf[i]*100).toFixed(1)}%</td>`:''}</tr>`).join('')}</tbody>
       </table>
+
+      ${renderMetrics(r.metrics)}
+      ${renderConfusion(r.metrics_visualization)}
+      ${renderRegressionViz(r.metrics_visualization)}
+      ${renderInterpretability(r.interpretability)}
     </div>`;
   el.classList.remove('hidden');
   document.getElementById('pred-btn').disabled = false;
